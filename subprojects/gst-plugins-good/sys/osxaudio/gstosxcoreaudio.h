@@ -119,6 +119,7 @@ struct _GstCoreAudio
 
 #ifdef HAVE_IOS
   gdouble first_sample_time;
+  gboolean configure_session;
 #endif
 };
 
