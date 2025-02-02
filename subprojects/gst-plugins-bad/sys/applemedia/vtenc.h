@@ -86,6 +86,9 @@ struct _GstVTEnc
   GstClockTime max_keyframe_interval_duration;
   gint max_frame_delay;
   gint latency_frames;
+  GstClockTime last_frame_time;
+  GstClockTime last_frame_duration;
+  gboolean steady_frame_flow;
   gboolean preserve_alpha;
   GstVtencRateControl rate_control;
 
