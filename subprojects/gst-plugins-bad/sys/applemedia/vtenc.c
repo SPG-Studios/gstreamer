@@ -546,6 +546,9 @@ gst_vtenc_init (GstVTEnc * self)
   self->dump_properties = FALSE;
   self->dump_attributes = FALSE;
   self->latency_frames = -1;
+  self->last_frame_time = GST_CLOCK_TIME_NONE;
+  self->last_frame_duration = GST_CLOCK_TIME_NONE;
+  self->steady_frame_flow = false;
   self->session = NULL;
   self->profile_level = NULL;
   self->have_field_order = TRUE;
@@ -818,8 +821,13 @@ gst_vtenc_finish_encoding (GstVTEnc * self, gboolean is_flushing)
     return self->downstream_ret;
   }
 
-  if (is_flushing)
+  if (is_flushing) {
+    self->last_frame_time = GST_CLOCK_TIME_NONE;
+    self->last_frame_duration = GST_CLOCK_TIME_NONE;
+    self->steady_frame_flow = false;
+
     gst_vtenc_set_flushing_flag (self);
+  }
 
   if (!gst_vtenc_ensure_output_loop (self)) {
     GST_ERROR_OBJECT (self, "Output loop failed to resume");
@@ -1244,6 +1252,24 @@ gst_vtenc_handle_frame (GstVideoEncoder * enc, GstVideoCodecFrame * frame)
 
   if (!gst_vtenc_is_negotiated (self))
     goto not_negotiated;
+
+  GstClock *clock = gst_element_get_clock(GST_ELEMENT(enc));
+  GstClockTime time = gst_clock_get_time(clock);
+
+  self->steady_frame_flow = false;
+  if (GST_CLOCK_TIME_IS_VALID (self->last_frame_time)) {
+    GstClockTime half_duration = self->last_frame_duration / 2;
+    if (time < self->last_frame_time + half_duration) {
+      GST_WARNING_OBJECT (self, "burst");
+    } else if (time > self->last_frame_time + self->last_frame_duration + half_duration) {
+      GST_WARNING_OBJECT (self, "gap");
+    } else {
+      self->steady_frame_flow = true;
+    }
+  }
+
+  self->last_frame_time = time;
+  self->last_frame_duration = frame->duration;
 
   return gst_vtenc_encode_frame (self, frame);
 
@@ -1876,6 +1902,11 @@ gst_vtenc_update_latency (GstVTEnc * self)
   int frames = 0;
   GstClockTime frame_duration;
   GstClockTime latency;
+
+  if (!self->steady_frame_flow) {
+    GST_INFO_OBJECT (self, "frame flow is not steady, can't set latency");
+    return;
+  }
 
   if (self->video_info.fps_d == 0) {
     GST_INFO_OBJECT (self, "framerate not known, can't set latency");
