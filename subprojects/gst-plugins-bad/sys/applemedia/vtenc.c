@@ -1468,13 +1468,7 @@ gst_vtenc_compute_dts_offset (GstVTEnc * self, gint fps_n, gint fps_d)
           && self->h264_profile == GST_H264_PROFILE_BASELINE)) {
     num_offset_frames = 0;
   } else {
-    if (self->specific_format_id == kCMVideoCodecType_H264) {
-      // H264 encoder always sets 2 max_num_ref_frames
-      num_offset_frames = 1;
-    } else {
-      // HEVC encoder uses B-pyramid
-      num_offset_frames = 2;
-    }
+    num_offset_frames = 2;
   }
 
   if (fps_d == 0 && num_offset_frames != 0) {
