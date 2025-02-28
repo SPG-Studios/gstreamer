@@ -351,7 +351,7 @@ let DEFAULT_FPS: Int32 = 30
       }
     }
 
-    buffer.pointee.duration = 0
+    buffer.pointee.duration = GST_CLOCK_TIME_NONE
     buffer.pointee.pts = timestamp
     bufPtr.pointee = buffer
     return GST_FLOW_OK
