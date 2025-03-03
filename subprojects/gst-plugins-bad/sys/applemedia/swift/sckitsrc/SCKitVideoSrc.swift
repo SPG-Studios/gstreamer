@@ -63,6 +63,7 @@ let DEFAULT_FPS: Int32 = 30
   @objc public var showCursor: Bool = (DEFAULT_SHOW_CURSOR == 1)
   @objc public var allowTransparency: Bool = (DEFAULT_ALLOW_TRANSPARENCY == 1)
   @objc public var cropRect: CGRect = CGRect.zero
+  @objc public var latency: GstClockTime = 0
 
   @objc public init(
     src: UnsafeMutablePointer<GstBaseSrc>, debugCat: UnsafeMutablePointer<GstDebugCategory>
@@ -490,6 +491,8 @@ let DEFAULT_FPS: Int32 = 30
     } else {
       scConfig.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
       scConfig.minimumFrameInterval = CMTime(value: 1, timescale: DEFAULT_FPS)
+      self.latency = gst_util_uint64_scale(
+        GST_SECOND, 1, UInt64(DEFAULT_FPS))
     }
 
     // Before macOS 14.0, we can't get the scale factor directly from the filter.
@@ -616,6 +619,9 @@ let DEFAULT_FPS: Int32 = 30
   private func setupConfig(_ config: SCStreamConfiguration, basedOn videoInfo: GstVideoInfo) {
     config.minimumFrameInterval = CMTime(
       value: Int64(videoInfo.fps_d), timescale: Int32(videoInfo.fps_n))
+    self.latency = gst_util_uint64_scale(
+          GST_SECOND, UInt64(videoInfo.fps_d),
+          UInt64(videoInfo.fps_n))
 
     switch videoInfo.finfo.pointee.format {
     case GST_VIDEO_FORMAT_NV12 where videoInfo.colorimetry.range == GST_VIDEO_COLOR_RANGE_0_255:

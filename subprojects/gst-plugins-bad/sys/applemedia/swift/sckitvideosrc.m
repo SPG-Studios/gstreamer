@@ -250,6 +250,46 @@ gst_sckit_video_src_fixate (GstBaseSrc * src, GstCaps * caps)
 }
 
 static gboolean
+gst_sckit_video_query_latency (GstBaseSrc * src, gboolean * live,
+    GstClockTime * min_latency, GstClockTime * max_latency)
+{
+  GstSCKitVideoSrc *self = GST_SCKIT_VIDEO_SRC (src);
+
+  GST_OBJECT_LOCK (src);
+
+  if (min_latency)
+    *min_latency = self->impl.latency;
+  if (max_latency)
+    *max_latency = self->impl.latency;
+
+  GST_OBJECT_UNLOCK (src);
+
+  return TRUE;
+}
+
+static gboolean
+gst_sckit_video_query (GstBaseSrc * src, GstQuery * query)
+{
+  gboolean res;
+
+  switch (GST_QUERY_TYPE (query)) {
+    case GST_QUERY_LATENCY:
+    {
+      GstClockTime min, max;
+      gboolean live;
+
+      res = gst_sckit_video_query_latency (src, &live, &min, &max);
+      gst_query_set_latency (query, live, min, max);
+      break;
+    }
+    default:
+      res = ((GstBaseSrcClass *)gst_sckit_video_src_parent_class)->query(src, query);
+  }
+
+  return res;
+}
+
+static gboolean
 gst_sckit_video_src_unlock (GstBaseSrc * src)
 {
   GstSCKitVideoSrc *self = GST_SCKIT_VIDEO_SRC (src);
@@ -294,6 +334,7 @@ gst_sckit_video_src_class_init (GstSCKitVideoSrcClass * klass)
   basesrc_class->set_caps = gst_sckit_video_src_set_caps;
   basesrc_class->get_caps = gst_sckit_video_src_get_caps;
   basesrc_class->fixate = gst_sckit_video_src_fixate;
+  basesrc_class->query = gst_sckit_video_query;
   basesrc_class->unlock = gst_sckit_video_src_unlock;
   basesrc_class->unlock_stop = gst_sckit_video_src_unlock_stop;
 
