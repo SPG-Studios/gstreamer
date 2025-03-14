@@ -48,7 +48,6 @@ let DEFAULT_FPS: Int32 = 30
   private var videoInfo: GstVideoInfo?
 
   private var currentOutputRes: (Int, Int)?
-  private var firstBufferPts = CMTime.zero
   private var isStreamConfigured: Bool {
     return self.scConfig != nil
   }
@@ -64,6 +63,7 @@ let DEFAULT_FPS: Int32 = 30
   @objc public var showCursor: Bool = (DEFAULT_SHOW_CURSOR == 1)
   @objc public var allowTransparency: Bool = (DEFAULT_ALLOW_TRANSPARENCY == 1)
   @objc public var cropRect: CGRect = CGRect.zero
+  @objc public var latency: GstClockTime = 0
 
   @objc public init(
     src: UnsafeMutablePointer<GstBaseSrc>, debugCat: UnsafeMutablePointer<GstDebugCategory>
@@ -352,7 +352,7 @@ let DEFAULT_FPS: Int32 = 30
       }
     }
 
-    buffer.pointee.duration = 0
+    buffer.pointee.duration = GST_CLOCK_TIME_NONE
     buffer.pointee.pts = timestamp
     bufPtr.pointee = buffer
     return GST_FLOW_OK
@@ -491,6 +491,8 @@ let DEFAULT_FPS: Int32 = 30
     } else {
       scConfig.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
       scConfig.minimumFrameInterval = CMTime(value: 1, timescale: DEFAULT_FPS)
+      self.latency = gst_util_uint64_scale(
+        GST_SECOND, 1, UInt64(DEFAULT_FPS))
     }
 
     // Before macOS 14.0, we can't get the scale factor directly from the filter.
@@ -617,6 +619,9 @@ let DEFAULT_FPS: Int32 = 30
   private func setupConfig(_ config: SCStreamConfiguration, basedOn videoInfo: GstVideoInfo) {
     config.minimumFrameInterval = CMTime(
       value: Int64(videoInfo.fps_d), timescale: Int32(videoInfo.fps_n))
+    self.latency = gst_util_uint64_scale(
+          GST_SECOND, UInt64(videoInfo.fps_d),
+          UInt64(videoInfo.fps_n))
 
     switch videoInfo.finfo.pointee.format {
     case GST_VIDEO_FORMAT_NV12 where videoInfo.colorimetry.range == GST_VIDEO_COLOR_RANGE_0_255:
@@ -640,33 +645,30 @@ let DEFAULT_FPS: Int32 = 30
       return GST_CLOCK_TIME_NONE
     }
 
-    let (ourClock, baseTime) = self.baseSrc.withMemoryRebound(to: GstElement.self, capacity: 1) {
-      (gst_element_get_clock($0), gst_element_get_base_time($0))
+    // Get sync-ed clocks
+    let now = scClock.time
+    let runningTime = self.baseSrc.withMemoryRebound(to: GstElement.self, capacity: 1) {
+      gst_element_get_current_running_time($0)
     }
 
-    guard let ourClock = ourClock else {
-      #gstError(CAT, "Couldn't get pipeline clock!")
+    if runningTime == GST_CLOCK_TIME_NONE {
+      #gstError(CAT, "Couldn't get pipeline runningTime!")
       return GST_CLOCK_TIME_NONE
     }
 
-    if firstBufferPts.value == 0 {
-      firstBufferPts = samplePts
+    let sampleScaledPts = gst_util_uint64_scale(
+      GST_SECOND, UInt64(samplePts.value),
+      UInt64(samplePts.timescale))
+
+    let sckitScaledNow = gst_util_uint64_scale(
+      GST_SECOND, UInt64(now.value), UInt64(now.timescale))
+
+    let rtPlusSamplePts = runningTime + sampleScaledPts;
+    if rtPlusSamplePts < sckitScaledNow {
+      return GST_CLOCK_TIME_NONE
     }
 
-    let actualPts = CMTimeSubtract(samplePts, firstBufferPts)
-    let sckitPts = gst_util_uint64_scale(
-      GST_SECOND, UInt64(actualPts.value),
-      UInt64(actualPts.timescale))
-
-    let now = scClock.time
-    let gstNow = gst_util_uint64_scale(
-      GST_SECOND, UInt64(now.value), UInt64(now.timescale))
-    let gstNowDiff = gstNow - sckitPts
-
-    let runningTime = gst_clock_get_time(ourClock) - baseTime
-    let timestamp = runningTime >= gstNowDiff ? runningTime - gstNowDiff : runningTime
-
-    return timestamp
+    return rtPlusSamplePts - sckitScaledNow
   }
 
   private func unlock() -> Bool {
