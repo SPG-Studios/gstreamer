@@ -807,6 +807,8 @@ gst_vtdec_sink_event (GstVideoDecoder * decoder, GstEvent * event)
       g_mutex_lock (&vtdec->queue_mutex);
       vtdec->is_flushing = FALSE;
       g_mutex_unlock (&vtdec->queue_mutex);
+
+      vtdec->downstream_ret = GST_FLOW_OK;
       break;
     default:
       break;
