@@ -36,7 +36,7 @@ GST_DEBUG_CATEGORY_EXTERN (gst_debug_srtobject);
 static GHashTable *connections_table;
 
 /* This lock guards access to the connections_table */
-static GMutex connections_lock;
+static GRecMutex connections_lock;
 
 static void
 gst_srt_listener_connection_destroy (GstSRTListenerConnection * connection)
@@ -94,17 +94,28 @@ gst_srt_listener_connection_get_object (GstSRTListenerConnection
 {
   GList *item;
 
-  g_mutex_lock (&connections_lock);
+  g_rec_mutex_lock (&connections_lock);
 
   // If no connection key is set then this is a single element connection
   if (connection->key_is_set) {
     item = g_list_find_custom (connection->objects, stream_id,
         gst_srt_listener_connection_compare_func);
+
+    if (item == NULL) {
+      item =
+          g_list_find_custom (connection->objects, NULL,
+          gst_srt_listener_connection_compare_func);
+
+      if (item != NULL) {
+        GstSRTObject *object = (GstSRTObject *) item->data;
+        g_object_set (G_OBJECT (object->element), "streamid", stream_id, NULL);
+      }
+    }
   } else {
     item = g_list_first (connection->objects);
   }
 
-  g_mutex_unlock (&connections_lock);
+  g_rec_mutex_unlock (&connections_lock);
 
   if (item) {
     return item->data;
@@ -428,7 +439,7 @@ gst_srt_listener_connection_add_object (GstSRTObject * srtobject,
   gboolean key_is_set = FALSE;
   gboolean ret = TRUE;
 
-  g_mutex_lock (&connections_lock);
+  g_rec_mutex_lock (&connections_lock);
   GST_OBJECT_LOCK (srtobject->element);
 
   GHashTable *connections = gst_srt_connections_get_unlocked (TRUE);
@@ -461,8 +472,13 @@ gst_srt_listener_connection_add_object (GstSRTObject * srtobject,
 
     gboolean added = FALSE;
     if (connection->key_is_set) {
-      added = g_list_find_custom (connection->objects, stream_id,
-          gst_srt_listener_connection_compare_func) != NULL;
+      if (stream_id != NULL) {
+        added = g_list_find_custom (connection->objects, stream_id,
+            gst_srt_listener_connection_compare_func) != NULL;
+      } else {
+        // stream id will be set upon accepting new callers
+        added = FALSE;
+      }
     } else {
       added = (connection->objects != NULL);
     }
@@ -492,7 +508,7 @@ gst_srt_listener_connection_add_object (GstSRTObject * srtobject,
 
 out:
   g_free (connection_key);
-  g_mutex_unlock (&connections_lock);
+  g_rec_mutex_unlock (&connections_lock);
 
   return ret;
 }
@@ -519,7 +535,7 @@ gst_srt_listener_connection_remove_object (GstSRTObject * srtobject,
   if (srtobject->connection_key == NULL)
     return TRUE;
 
-  g_mutex_lock (&connections_lock);
+  g_rec_mutex_lock (&connections_lock);
 
   GHashTable *connections = gst_srt_connections_get_unlocked (FALSE);
   if (connections == NULL) {
@@ -554,7 +570,7 @@ gst_srt_listener_connection_remove_object (GstSRTObject * srtobject,
 
   if (remaining == 0) {
     gst_srt_listener_connection_remove_unlocked (connection);
-    g_mutex_unlock (&connections_lock);
+    g_rec_mutex_unlock (&connections_lock);
     /* This needs to be run without the connections lock, to not cause
        internal libsrt issues when holding lock in the listener callback */
     gst_srt_listener_connection_destroy (connection);
@@ -562,6 +578,6 @@ gst_srt_listener_connection_remove_object (GstSRTObject * srtobject,
   }
 
 out:
-  g_mutex_unlock (&connections_lock);
+  g_rec_mutex_unlock (&connections_lock);
   return ret;
 }
